@@ -14,7 +14,7 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
-	"github.com/mitchellh/goamz/aws"
+	"github.com/lachie/goamz/aws"
 	"io"
 	"io/ioutil"
 	"log"
@@ -366,8 +366,13 @@ func (b *Bucket) List(prefix, delim, marker string, max int) (result *ListResp, 
 
 // Returns a mapping of all key names in this bucket to Key objects
 func (b *Bucket) GetBucketContents() (*map[string]Key, error) {
+  return b.GetBucketContentsWithPrefix("")
+}
+
+
+// Returns a mapping of all key names in this bucket to Key objects
+func (b *Bucket) GetBucketContentsWithPrefix(prefix string) (*map[string]Key, error) {
 	bucket_contents := map[string]Key{}
-	prefix := ""
 	path_separator := ""
 	marker := ""
 	for {
@@ -387,6 +392,31 @@ func (b *Bucket) GetBucketContents() (*map[string]Key, error) {
 
 	return &bucket_contents, nil
 }
+
+
+func (b *Bucket) GetVersions(path string) (rc io.ReadCloser, err error) {
+	req := &request{
+		bucket: b.Name,
+		path:   path,
+    params: url.Values{"version":[]string{""}},
+	}
+	err = b.S3.prepare(req)
+	if err != nil {
+		return nil, err
+	}
+	for attempt := attempts.Start(); attempt.Next(); {
+		hresp, err := b.S3.run(req, nil)
+		if shouldRetry(err) && attempt.HasNext() {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		return hresp.Body, nil
+	}
+	panic("unreachable")
+}
+
 
 // URL returns a non-signed URL that allows retriving the
 // object at path. It only works if the object is publicly
