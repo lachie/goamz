@@ -102,8 +102,6 @@ func (p *ParallelUploader) Put() error {
 		return err
 	}
 
-	fmt.Printf("p %#v\n", p)
-
 	m, err := p.b.Multi(p.Key, p.ContentType, p.Acl)
 	if err != nil {
 		return err
