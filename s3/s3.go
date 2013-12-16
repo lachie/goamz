@@ -54,6 +54,16 @@ var attempts = aws.AttemptStrategy{
 	Delay: 200 * time.Millisecond,
 }
 
+var originalStrategy = attempts
+
+func SetAttemptStrategy(s *aws.AttemptStrategy) {
+	if s == nil {
+		attempts = originalStrategy
+	} else {
+		attempts = *s
+	}
+}
+
 // New creates a new S3.
 func New(auth aws.Auth, region aws.Region) *S3 {
 	return &S3{auth, region, 0}
