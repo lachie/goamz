@@ -129,6 +129,7 @@ func (p *ParallelUploader) Put() error {
 	}
 
 	for offset := int64(0); offset < p.TotalSize; offset += p.PartSize {
+    fmt.Printf("off %d size %d\n", offset, p.PartSize)
 		part := findMultiPart(existing, current)
 		current++
 
@@ -194,8 +195,8 @@ func (job *PartJob) Calculate() error {
 // does this job need uploading?
 func (job *PartJob) shouldUpload() bool {
 	job.Calculate()
-  fmt.Printf("shouldup %s ?= %s\n", job.Md5b64, job.Part.ETag)
-	return job.Md5hex != `"`+job.Part.ETag+`"`
+  fmt.Printf("shouldup %s ?= %s\n", job.Md5hex, job.Part.ETag)
+	return `"`+job.Md5hex+`"` != job.Part.ETag
 }
 
 // do the upload
