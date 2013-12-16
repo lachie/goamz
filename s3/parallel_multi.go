@@ -17,20 +17,20 @@ var (
 	DefaultMultiWorkerCount       = 1
 )
 
-type partJob struct {
+type PartJob struct {
 	multi   *Multi
-	part    *Part
-	section *io.SectionReader
-	size    int64
-	md5b64  string
-	md5hex  string
+	Part    *Part
+	Section *io.SectionReader
+	Size    int64
+	Md5b64  string
+	Md5hex  string
 }
 type partResult struct {
 	part *Part
 	err  error
 }
 
-type UploadWorkerFn func(id int, jobs <-chan partJob, results chan<- partResult)
+type UploadWorkerFn func(id int, job PartJob) error
 
 type ParallelUploader struct {
 	b            *Bucket
@@ -114,24 +114,32 @@ func (p *ParallelUploader) Put() error {
 
 	current := 1
 
-	partc := make(chan partJob, 100)
+	partc := make(chan PartJob, 100)
 	resultc := make(chan partResult, 100)
 
 	for w := 0; w < p.WorkerCount; w++ {
-		go MultiPartUploader(w, partc, resultc)
+		go func() {
+      for job := range partc {
+        resultc <- partResult{
+          part: job.Part,
+          err: p.UploadWorker(w, job),
+        }
+      }
+    }()
 	}
 
 	for offset := int64(0); offset < p.TotalSize; offset += p.PartSize {
 		part := findMultiPart(existing, current)
 		current++
 
-		partc <- partJob{
+		partc <- PartJob{
 			multi:   m,
-			part:    &part,
-			section: io.NewSectionReader(p.ReaderAt, offset, p.PartSize),
+			Part:    &part,
+			Section: io.NewSectionReader(p.ReaderAt, offset, p.PartSize),
 		}
 	}
 	close(partc)
+
 
 	// gather results
 	partLen := current - 1
@@ -150,63 +158,62 @@ func (p *ParallelUploader) Put() error {
 	return m.Complete(uploadedParts)
 }
 
-func MultiPartUploader(id int, jobs <-chan partJob, results chan<- partResult) {
-	for job := range jobs {
-		result := partResult{part: job.part}
+func MultiPartUploader(id int, job PartJob) error {
+  fmt.Printf("id %d job %#v\n", id, job)
+  if job.shouldUpload() {
+    return job.put()
+  }
 
-		if job.shouldUpload() {
-			result.err = job.put()
-		}
-
-		results <- result
-	}
+  return nil
 }
 
+
 // idempotently calculate the various things we need to know about this job
-func (job *partJob) calculate() error {
-	if job.md5hex != "" {
+func (job *PartJob) Calculate() error {
+	if job.Md5hex != "" {
 		return nil
 	}
 
-	_, err := job.section.Seek(0, 0)
+	_, err := job.Section.Seek(0, 0)
 	if err != nil {
 		return err
 	}
 	digest := md5.New()
-	job.size, err = io.Copy(digest, job.section)
+	job.Size, err = io.Copy(digest, job.Section)
 	if err != nil {
 		return err
 	}
 
 	sum := digest.Sum(nil)
-	job.md5hex = hex.EncodeToString(sum)
-	job.md5b64 = base64.StdEncoding.EncodeToString(sum)
+	job.Md5hex = hex.EncodeToString(sum)
+	job.Md5b64 = base64.StdEncoding.EncodeToString(sum)
 
 	return nil
 }
 
 // does this job need uploading?
-func (job *partJob) shouldUpload() bool {
-	job.calculate()
-	return job.md5hex != `"`+job.part.ETag+`"`
+func (job *PartJob) shouldUpload() bool {
+	job.Calculate()
+  fmt.Printf("shouldup %s ?= %s\n", job.Md5b64, job.Part.ETag)
+	return job.Md5hex != `"`+job.Part.ETag+`"`
 }
 
 // do the upload
-func (job *partJob) put() error {
+func (job *PartJob) put() error {
 	m := job.multi
-	job.calculate()
+	job.Calculate()
 
 	headers := map[string][]string{
-		"Content-Length": {strconv.FormatInt(job.size, 10)},
-		"Content-MD5":    {job.md5b64},
+		"Content-Length": {strconv.FormatInt(job.Size, 10)},
+		"Content-MD5":    {job.Md5b64},
 	}
 	params := map[string][]string{
 		"uploadId":   {m.UploadId},
-		"partNumber": {strconv.FormatInt(int64(job.part.N), 10)},
+		"partNumber": {strconv.FormatInt(int64(job.Part.N), 10)},
 	}
 
 	for attempt := attempts.Start(); attempt.Next(); {
-		_, err := job.section.Seek(0, 0)
+		_, err := job.Section.Seek(0, 0)
 		if err != nil {
 			return err
 		}
@@ -217,7 +224,7 @@ func (job *partJob) put() error {
 			path:    m.Key,
 			headers: headers,
 			params:  params,
-			payload: job.section,
+			payload: job.Section,
 		}
 
 		err = m.Bucket.S3.prepare(req)
@@ -238,8 +245,8 @@ func (job *partJob) put() error {
 			return errors.New("part upload succeeded with no ETag")
 		}
 
-		job.part.ETag = etag
-		job.part.Size = job.size
+		job.Part.ETag = etag
+		job.Part.Size = job.Size
 
 		return nil
 	}
