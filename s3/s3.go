@@ -435,6 +435,29 @@ func (b *Bucket) GetKey(path string) (*Key, error) {
 	panic("unreachable")
 }
 
+func (b *Bucket) GetVersions(path string) (rc io.ReadCloser, err error) {
+	req := &request{
+		bucket: b.Name,
+		path:   path,
+		params: url.Values{"version": []string{""}},
+	}
+	err = b.S3.prepare(req)
+	if err != nil {
+		return nil, err
+	}
+	for attempt := attempts.Start(); attempt.Next(); {
+		hresp, err := b.S3.run(req, nil)
+		if shouldRetry(err) && attempt.HasNext() {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		return hresp.Body, nil
+	}
+	panic("unreachable")
+}
+
 // URL returns a non-signed URL that allows retriving the
 // object at path. It only works if the object is publicly
 // readable (see SignedURL).
